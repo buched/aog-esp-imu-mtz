@@ -26,8 +26,8 @@ struct Storage {
 	//tractors WiFi or mobile hotspots. Connections are checked in this order
 	char ssid1[24] = "GPS_unit_ESP_M8T";	  // WiFi network Client name
 	char password1[24] = "";                // WiFi network password//Accesspoint name and password
-	char ssid2[24] = "Fendt_209V";			    // WiFi network Client name
-	char password2[24] = "";                // WiFi network password//Accesspoint name and password
+	char ssid2[24] = "Livebox-8840";			    // WiFi network Client name
+	char password2[24] = "JpFSaAdwirqKaw32tE";                // WiFi network password//Accesspoint name and password
 	char ssid3[24] = "GPS_unit_F9P_Net";    // WiFi network Client name
 	char password3[24] = "";                // WiFi network password//Accesspoint name and password
 	char ssid4[24] = "CAT S41";             // WiFi network Client name
@@ -41,15 +41,15 @@ struct Storage {
 
 	byte WiFi_myip[4] = { 192, 168, 1, 75 };      // IMU module 
 	byte WiFi_gwip[4] = { 192, 168, 1, 1 };       // Gateway IP only used if Accesspoint created
-	byte WiFi_ipDest_ending = 255;                // ending of IP address to send UDP data to
+	byte WiFi_ipDest_ending = 14;                // ending of IP address to send UDP data to
 	byte mask[4] = { 255, 255, 255, 0 };
 	byte myDNS[4] = { 8, 8, 8, 8 };               // optional
 
 	//Ethernet
 	byte Eth_myip[4] = { 192, 168, 1, 76 };       // autosteer module 
-	byte Eth_ipDest_ending = 255;                 // ending of IP address to send UDP data to
+	byte Eth_ipDest_ending = 14;                 // ending of IP address to send UDP data to
 	byte Eth_mac[6] = { 0x70,0x69,0x69,0x2D,0x30,0x30 };  // must be unique in the network
-	bool Eth_static_IP = false;					          // false = use DHPC and set last number to 80 (x.x.x.80) / true = use IP as set above
+	bool Eth_static_IP = true;					          // false = use DHPC and set last number to 80 (x.x.x.80) / true = use IP as set above
 
 	unsigned int PortIMUToAOG = 5566;             // this is port of this module: Autosteer = 5577 IMU = 5566 GPS = 
 	unsigned int PortFromAOG = 8888;              // port to listen for AOG
@@ -62,7 +62,7 @@ struct Storage {
 
 	byte IMUDataRate = 0;							            // 0 = 10 Hz (default) 
 
-	uint8_t IMUType = 2;                          // 0: none, 2: CMPS14, 3: BNO080/85 IMU
+	uint8_t IMUType = 2;                          // 0: none, 2: CMPS14, 3: BNO080/85 IMU, 4: hwt901b ttl
 
 	uint8_t InvertRoll = 0;		                    // 0: no, set to 1 to change roll direction
 
@@ -133,6 +133,7 @@ byte IMUToAOG[10] = { 0,0,0,0,0,0,0,0,0,0};
 #include <Ethernet.h>
 #include <EthernetUdp.h>   
 #include "BNO08x_AOG.h"
+#include "JY901.h"
 
 // Instances --------------------------------------------------------------------------------------
 WiFiUDP WiFiUDPFromAOG;
@@ -171,8 +172,8 @@ byte watchdogTimer = 0;
 
 //IMU, inclinometer variables
 //bool imu_initialized = false;
-float roll = 0, heading = 0;
-int roll16 = 0, heading16 = 0;
+float roll = 0, heading = 0, pitch = 0;
+int roll16 = 0, heading16 = 0, pitch16 = 0;
 // BNO08x address variables to check where it is
 int nrBNO08xAdresses = sizeof(Set.bno08xAddresses) / sizeof(Set.bno08xAddresses[0]);
 byte bno08xAddress, REPORT_INTERVAL;
@@ -183,6 +184,11 @@ double bno08xPitch = 0;
 
 int bno08xHeading10x = 0, bno08xRoll10x = 0;
 
+float hwt901Heading = 0;
+double hwt901Roll = 0;
+double hwt901Pitch = 0;
+
+  int hwt901Heading10x = 0, hwt901Roll10x = 0, hwt901Pitch10x = 0;
 //webpage
 long argVal = 0;
 
@@ -197,6 +203,9 @@ void setup() {
 	//init USB
 	Serial.begin(38400);
 	delay(200); //without waiting, no serial print
+  
+  Serial2.begin(38400);
+  delay(200); //without waiting, no serial print
 	Serial.println();
 
 	//get EEPROM data
@@ -367,6 +376,54 @@ void loop() {
 			}
 			break;
 
+    case 4:
+        while (Serial2.available()) 
+          {
+            JY901.CopeSerialData(Serial2.read()); //Call JY901 data cope function
+          }
+    
+        hwt901Heading = (JY901.stcAngle.Angle[2]);
+//        hwt901Heading = (JY901.stcMag.h[1]);
+        hwt901Pitch = (JY901.stcAngle.Angle[1]);
+        hwt901Roll = (JY901.stcAngle.Angle[0]);
+
+        //heading
+        hwt901Heading = (hwt901Heading) / 32768;
+        hwt901Heading = (hwt901Heading) * 180;
+        hwt901Heading = -hwt901Heading;
+        if (hwt901Heading < 0 && hwt901Heading >= -180) //Scale BNO085 yaw from [-180°;180°] to [0;360°]
+        {
+          hwt901Heading = hwt901Heading + 360;
+        }
+        hwt901Heading10x = (int)(hwt901Heading * 10);
+        
+        //roll
+        hwt901Roll = (int16_t)(hwt901Roll) / 3.2768;
+        hwt901Roll = hwt901Roll * 0.01825;
+        hwt901Roll10x = (int16_t)(hwt901Roll) *10;
+        
+        //pitch
+        hwt901Pitch = (int16_t)(hwt901Pitch) / 3.2768;
+        hwt901Pitch = hwt901Pitch * 0.01825;
+        hwt901Pitch10x = (int16_t)(hwt901Pitch) * 10;
+        
+        heading = hwt901Heading10x;
+        roll = float(hwt901Roll10x);
+        pitch = float(hwt901Pitch10x);
+        
+        //the heading x10
+        IMUToAOG[5] = (byte)hwt901Heading10x;
+        IMUToAOG[6] = hwt901Heading10x >> 8;
+
+        //the roll x10
+        IMUToAOG[7] = (uint16_t)hwt901Roll10x;
+        IMUToAOG[8] = hwt901Roll10x >> 8;
+// decommentez pour debug.
+//        Serial.println("roll :");
+//        Serial.println(hwt901Roll);
+//        Serial.println("roll10x :");
+//        Serial.println(hwt901Roll10x);
+      break;
 		}//end switch case
 
 		//add the checksum
